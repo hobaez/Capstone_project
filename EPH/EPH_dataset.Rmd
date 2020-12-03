@@ -1,0 +1,718 @@
+---
+title: "EPH_Dataset"
+author: "Horacio Báez"
+date: "20/6/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Preface
+
+This report is part of the project Data Science: Capstone of the HarvardX's Data Science Profesional Certificate Program.
+
+## Introduction
+
+Paraguay is a small country in the center of South America that has been growing a lot since the beginning of the 2000's. However, after almost 20 years of sustained growth, the Government still has a debt with public education and school dropout. 
+
+Even nowadays, just around 10% of the population have the opportunity to get into college and even less people finish an undergraduate degree. This is caused mostly by two factors: cost of studying in the University and highschool dropout. In this project, we will focus mainly on highschool dropout.
+
+### EPH Dataset
+
+The General Directorate of Statistics (*DGEEC*, by its spanish acronym) set up the House's Permanent Poll or _Encuesta Permanente de Hogares_ (*EPH*, by its spanish acronym) collects information about a wide range of social and economic issues. One of the dimension of this Poll, is related to education.
+
+The goal of this project is to predict highschool dropout based on data from the _EPH_.
+
+We will be using the _EPH_ of the year 2017 for training purposes and teh _EPH_ of the year 2018 to test the model.
+
+### Model Evaluation
+
+The two metric that we will use to evaluate the performance of the model are the *sensitivity* (also known as *recall*) and the *F1 score*. 
+
+$Sensitivity = \frac{TP}{\text{TP + FN}}$
+
+Where $TP$ stands for _True Positive_ and $FN$ stands for _False Negatives_.
+
+$F1 = \frac{ 2\cdot precision\cdot recall}{precision + recall}$
+
+Where $recall=sensitivity$ and $precision = \frac{TP}{TP+FP}$ with $FP$ standing for _False Positives_.
+
+### Process and workflow
+
+The main steps in any data science project consists of:
+
+1.Data preparation: dowloading the dataset and prepare it to be processed and analysed.
+
+2.Data exploration and visualization: explore the data to understand the relantionship between variables.
+
+3.Data Cleaning: the dataset may contain data that is not relevant that can be removed or may need some other tpy of transformation before modeling.
+
+4.Data analysis and modeling: create a model using the insights obtained in the step 2. Then, test the model.
+
+5.Communicate: reporting the results.
+
+First, we load the 2017's _EPH_ as `eph_train` and the 2018's _EPH_ as `eph_test`. 
+
+After that first step, we proceed to explore the dataset. We can use the dictionary to ease our exploration, but the `View()` adn `head()` functions are useful as well. In this step we are going to plot some variables and explore them to find insights that will help us later to build our model of dropout prediction. 
+
+For training our model, we are going to use the `train()` function of the `caret` package, that is already optimize to try out different models with different models. At last we going to create a `results` data frame with the `sensitivity` and `F1_score` of the different models.
+
+## Method and analysis
+
+### Data Preparation
+
+In this section we will load both datasets for training (`eph_train`) and testing (`eph_test`) and load the packages needed throughout the project.
+
+```{r, message=FALSE,cache=TRUE}
+if(!require(tidyverse)) install.packages("tidyverse", repos="http://cran.us.r-project.org")
+if(!require(haven)) install.packages("haven", repos="http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos="http://cran.us.r-project.org")
+if(!require(MLmetrics)) install.packages("MLmetrics", repos="http://cran.us.r-project.org")
+if(!require(ggthemes)) install.packages("ggthemes", repos="http://cran.us.r-project.org")
+if(!require(rpart)) install.packages("rpart", repos="http://cran.us.r-project.org")
+#===========================================================
+eph_train <- read_sav("REG02_EPHC_ANUAL_2017.SAV")
+
+eph_test <- read_sav("REG02_EPHC_ANUAL_2018.SAV")
+```
+
+### Data Exploration
+
+Now that we have loaded the datasets and packaged required, we can start to explore the dataset.
+
+```{r,cache=TRUE}
+class(eph_train)
+
+class(eph_test)
+
+head(eph_train)
+dim(eph_train)
+```
+
+We can see that, although we have less that 100,000 observations, the dataset contains 218 variables, so we will not cover or use all of them in this project since many of them have no predictive power. Despite we will not use them, they may still be useful in other projects in which the objective it is different.
+
+If we dig in enough, we can realize that there is no variable that indicates wheter a person has dropped out or not. We are going to add a `desertor` variable later.
+
+#### Income-related variables
+
+First, let us plot some variables related to the people's income and its distribution.
+
+```{r,cache=TRUE}
+#Income distribution by department
+eph_train%>%
+  filter(as.numeric(E01A)<999999999)%>%
+  filter(E01A!=0)%>%
+  group_by(DPTO)%>%
+  ggplot(aes(x=as_factor(DPTO), y=log10(as.numeric(E01A))))+
+  geom_boxplot()+
+  coord_flip()+
+  ylab("Log income")+
+  xlab("Department")+
+  ggtitle("Income by department")+
+  theme_economist()
+```
+
+It is important to note that Paraguay's territory splits into 17 departments and an autonomous capital city (Asuncion). The territory of these departments can be tagged into two categories: urban and rural. Let us explore the income by area.
+
+```{r,cache=TRUE}
+#Income distribution by area
+eph_train%>%
+  filter(as.numeric(E01A)<999999999)%>%
+  filter(E01A!=0)%>%
+  group_by(DPTO)%>%
+  ggplot(aes(x=as_factor(AREA), y=log10(as.numeric(E01A))))+
+  geom_boxplot()+
+  ylab("Log income")+
+  xlab("Area")+
+  ggtitle("Income by area")+
+  theme_economist()
+```
+
+Another interesting fact is that, even nowadays, not everyone has an ID card and that may influence the job type of the people and, therefore, their income.
+
+```{r,cache=TRUE}
+library(tidyverse)
+library(ggthemes)
+#Income by ID type
+eph_train%>%
+  filter(E01A<999999999)%>%
+  filter(E01A!=0)%>%
+  group_by(P04A)%>%
+  ggplot(aes(y=log10(as.numeric(E01A)), x=(as_factor(P04A))))+
+  geom_boxplot()+
+  ylab("Income")+
+  xlab("ID type")+
+  theme_economist()
+```
+
+Another important issue that we can mention but will not be the focus of this report is the retirement of the people. The Government could not yet offer a complete solution so many people just do not have any retirement fund.
+
+```{r,cache=TRUE}
+#Income by retirement fund
+eph_train%>%
+  filter(E01A<999999999)%>%
+  filter(E01A!=0)%>%
+  group_by(B11)%>%
+  ggplot(aes(y=log10(as.numeric(E01A)), x=as.factor(B11)))+
+  geom_boxplot(aes(fill=as_factor(B11)))+
+  ylab("Log Income")+
+  xlab("Retirement Fund")+
+  labs(fill="Retirement Fund")+
+  theme_economist()
+```
+
+A common idea is that the income is directly linked to the amount of years of study. Here we plot that.
+
+```{r,cache=TRUE}
+#Years of study by decil of income
+eph_train%>%
+  filter(añoest%in%c('0',"1","2","3","4",'5','6','7','8','9','10','11','12','13','14','15','16','17','18'))%>%
+  filter(decili%in%c('0',"1","2","3","4",'5','6','7','8','9','10'))%>%
+  ggplot(aes(y=as.numeric(añoest),x=as.factor(decili)))+
+  geom_violin()+
+  ylab("Years of study")+
+  xlab("Decil")+
+  theme_economist()
+```
+ 
+We can notice that the lower the income, less chances of finishing highschool. The meaning of "finishing highschool" will be explained later, but a first graphic approach is useful.  
+ 
+We can plot the same as before, but now with quintiles.
+
+```{r,cache=TRUE}
+#Years of study by quintile
+eph_train%>%
+  filter(añoest%in%c('0',"1","2","3","4",'5','6','7','8','9','10','11','12','13','14','15','16','17','18'))%>%
+  filter(quintili%in%c('0',"1","2","3","4",'5'))%>%
+  ggplot(aes(y=as.numeric(añoest),x=as.factor(quintili)))+
+  geom_violin()+
+  ylab("Years of study")+
+  xlab("Quintil")+
+  theme_economist()
+```
+
+#### Language-related variables
+
+Now, before proceeding, it is essential to point out that Paraguay has two oficial languages: spanish and guarani. However, not everyone speaks both languages and this has several consecuences in the educational system. Let us explore that.
+
+```{r,cache=TRUE}
+#Language spoken by area
+eph_train%>%
+  filter(ED01%in%c("1","2","3","4"))%>%
+  ggplot(aes(x=as_factor(ED01)))+
+  geom_bar(aes(fill=as_factor(AREA)))+
+  ylab("Count")+
+  xlab("Language spoken")+
+  labs(fill="Area")+
+  theme_economist()
+```
+
+We can notice that guarani is the common language in rural areas, while spanish has a higher prevalence in urban areas.
+
+As shown in the graphic below, the fact that guarani is your main language, make you less likely to finish highschool. This is due to the fact that almost everything in the education system was developed in spanish and for spanish learners.
+
+```{r,cache=TRUE}
+#Years of study by language spoken
+eph_train%>%
+  filter(ED01%in%c("1","2","3","4"))%>%
+  filter(añoest%in%c('0',"1","2","3","4",'5','6','7','8','9','10',
+                     '11','12','13','14','15','16','17','18'))%>%
+  group_by(ED01)%>%
+  ggplot(aes(x=as_factor(ED01), y=as.numeric(añoest)))+
+  geom_violin()+
+  ylab("Study years")+
+  xlab("Language spoken")+
+  theme_economist()
+```
+
+Given that difference of study years because of the language, we may wonder about the literacy rate based on the main language. The graphic below shows, as expected, that iliteracy rate is higher across the population that speaks only guarani.
+
+```{r,cache=TRUE}
+#Literacy by language spoken
+eph_train%>%
+  filter(ED01%in%c("1","2","3","4"))%>%
+  filter(ED02%in%c("1","6"))%>%
+  ggplot(aes(x=as_factor(ED01)))+
+  geom_bar(aes(fill=as_factor(ED02)))+
+  ylab("Count")+
+  xlab("Language spoken")+
+  labs(fill="Literate")+
+  theme_economist()
+```
+
+#### Study-related variables
+
+We may recall a previous plot, which showed us that the higher median income was in Asuncion, where most people speaks only spanish. We can expect as well, based on the language spoken by departments, that places where spanish has high prevalence are going to have higher average years of schooling. Let us check that.
+
+```{r,cache=TRUE}
+#Years of study by department
+eph_train%>%
+  filter(añoest%in%c('0',"1","2","3","4",'5','6','7','8','9','10','11','12','13','14','15','16','17','18'))%>%
+  ggplot(aes(y=as.numeric(añoest),x=as_factor(DPTO)))+
+  geom_violin()+
+  coord_flip()+
+  ylab("Years of study")+
+  xlab("Department")+
+  theme_economist()
+```
+
+```{r,cache=TRUE}
+#Language spoken by department
+eph_train%>%
+  filter(ED01%in%c("1","2","3"))%>%
+  ggplot(aes(x=as_factor(DPTO)))+
+  geom_bar(aes(fill=as_factor(ED01)))+
+  coord_flip()+
+  ylab("Count")+
+  xlab("Department")+
+  labs(fill="Language spoken")+
+  theme_economist()
+```
+
+We can see in the distributions, that people of Asuncion and Central (a contiguous department) have higher chances of finishing highschool. This can be noticed in the next plot that show us that the places with the most people finishing university is in these places.
+
+```{r,cache=TRUE}
+#Highest degree by department
+eph_train%>%
+  filter(ED06C%in%c("1","14"))%>%
+  group_by(ED06C)%>%
+  ggplot(aes(x=as_factor(DPTO)))+
+  geom_bar(aes(fill=as_factor(ED06C)))+
+  coord_flip()+
+  ylab("Count")+
+  xlab("Department")+
+  labs(fill="Highest degree - Simplified")+
+  theme_economist()
+```
+
+Now, we may ask, the people that dropout studies does it because of the language? Let us explore that. First, let us check the distribution of dropout reasons.
+
+```{r,cache=TRUE}
+#Dropout by reason and sex
+eph_train%>%
+  filter(ED10%in%c("1","2","3","4","5","6","7","8","9","10","11","12",'13',"14","15","16","17","18"))%>%
+  group_by(ED10)%>%
+  ggplot(aes(x=as.factor(ED10)))+
+  geom_bar(aes(fill=as_factor(P06)))+
+  scale_y_log10()+
+  ylab("Count")+
+  xlab("Department")+
+  labs(fill="Drop-out reason")+
+  theme_economist()
+```
+
+First, we can see that there are 18 reasons that push people to dropout studies and in most of them, there is no difference between men and women, but in some of them there are. Let us explore that.
+
+```{r,cache=TRUE}
+#Summarize dropout reasons by sex
+eph_train%>%
+  filter(ED10%in%c("1","2","3","4","5","6","7","8","9","10","11","12",'13',"14","15","16","17","18"))%>%
+  group_by(as_factor(ED10))%>%
+  summarize(male_prop=mean(P06==1), female_prop= 1-male_prop)
+```
+
+We may notice that military service (reason number 17) has 97% of men proportion, while others like house chores (reason number 13) have a 98% of female proportion. This lead us to the question, does your sex make you more or less likely to finish highschool? Let us explore that.
+
+```{r,cache=TRUE}
+#Study years by sex
+eph_train%>%
+  filter(ED10%in%c("1","2","3","4","5","6","7","8","9","10","11","12",'13',"14","15","16","17","18"))%>%
+  ggplot(aes(x=as_factor(P06), y=as.numeric(ED10)))+
+  geom_violin()+
+  xlab("Sex")+
+  ylab("Study years")+
+  theme_economist()
+```
+
+We can notice that both distributions are similarly bimodal.
+
+Now, we can explore if there is any difference in the dropout proportion by department and sex of the people. And, again, they both look similar.
+
+```{r,cache=TRUE}
+#Dropout by department and sex
+eph_train%>%
+  filter(ED10%in%c("1","2","3","4","5","6","7","8","9","10","11","12",'13',"14","15","16","17","18"))%>%
+  group_by(ED10)%>%
+  ggplot(aes(x=as.factor(DPTO)))+
+  geom_bar(aes(fill=as_factor(P06)))+
+  ylab("Count")+
+  xlab("Department")+
+  labs(fill="Drop-out sex")+
+  theme_economist()
+```
+
+Something we did not explain before, is that a common reason to dropout highschool is not being financially able to pay for it, so that around 10 years ago the government started distributing a scholar kit with some basic materials. However, this has not reach yet the objective of benefit all students across the country. Here a plot.
+
+```{r,cache=TRUE}
+#Scholar kit by department
+eph_train%>%
+  filter(ED11B9%in%c("1","6"))%>%
+  group_by(ED11B9)%>%
+  ggplot(aes(x=as_factor(DPTO)))+
+  geom_bar(aes(fill=as_factor(ED11B9)))+
+  ylab("Count")+
+  xlab("Department")+
+  labs(fill="Scholar kit")+
+  theme_economist()
+```
+
+Following the same principles, the government started distributing scholar lunch as well with some improvements in benefit those who need it the most.
+
+```{r,cache=TRUE}
+#Scholar lunch by department
+eph_train%>%
+  filter(ED11F1%in%c("1","6"))%>%
+  group_by(ED11F1)%>%
+  ggplot(aes(x=as_factor(DPTO)))+
+  geom_bar(aes(fill=as_factor(ED11F1)))+
+  ylab("Count")+
+  xlab("Department")+
+  labs(fill="Scholar lunch")+
+  theme_economist()
+```
+
+We can recall that one of the reasons that force people to dropout highschool, is sickness. This is partially explained by the fact that the government is still working to strengthen the public healtcare system and cannot yet help everyone. Let us explore the distribution of years of study by kind of health insurance.
+
+```{r,cache=TRUE}
+#Years of study by health insurance
+eph_train%>%
+  filter(añoest%in%c('0',"1","2","3","4",'5','6','7','8','9','10','11','12','13','14','15','16','17','18'))%>%
+  filter(S01A%in%c("1","2","3","4",'5','6','7'))%>%
+  ggplot(aes(y=as.numeric(añoest),x=as_factor(S01A)))+
+  geom_violin()+
+  coord_flip()+
+  ylab("Years of study")+
+  xlab("Health insurance")+
+  theme_economist()
+```
+
+#### Area and department related variables
+
+We can recall that theres is a slight difference in the median income between urban and rural areas. It may be important to visualize the difference proportion of population by area in each department. Here a table.
+
+```{r,cache=TRUE}
+#Summarize departments population by area
+eph_train%>%
+  group_by(as_factor(DPTO))%>%
+  summarize(urban_prop=mean(AREA==1), rural_prop= 1-urban_prop)
+```
+
+And here, a useful graphic.
+
+```{r,cache=TRUE}
+#Department population by area
+eph_train%>%
+  ggplot(aes(x=as_factor(DPTO)))+
+  geom_bar(aes(fill=as_factor(AREA)))+
+  coord_flip()+
+  ylab("Count")+
+  xlab("Department")+
+  labs(fill="Area")+
+  theme_economist()
+```
+
+An now, finally, before proceeding to the next step, we can plot the years of study by area.
+
+```{r, cache=TRUE}
+#Years of study by area
+eph_train%>%
+  filter(añoest%in%c('0',"1","2","3","4",'5','6','7','8','9','10','11','12','13','14','15','16','17','18'))%>%
+  ggplot(aes(y=as.numeric(añoest),x=as_factor(AREA)))+
+  geom_violin()+
+  coord_flip()+
+  ylab("Years of study")+
+  xlab("Area")+
+  theme_economist()
+```
+
+### Data Cleaning
+
+Now, as mentioned before, we need to do mainly two things with the dataset before modeling.
+
+First, we have to create a `desertor` variable in order to have a response variable. This variable will be defined by some characteristics:
+
+  - If there is an observation in the `ED10` variables (reason to stop studying) means that the person stopped studying at some point in their life.
+  
+  - Since we are talking about *highschool* dropout, we also want the person to stop study before 9th grade, this can be notice in the `ED0504` variable. This is tricky because around 20 years ago there was a reform in the educational system, so that we have to take into account both 9th grade before and after the reform.
+  
+  - At last, we will split the `eph_train` dataset into `train_set` and `test_set`, in order to avoid using the `eph_test` before the final validation.
+
+After that, we also have to turn the labelled variables into factor variables so that is easier to work with them and model an algorithm.
+
+```{r,cache=TRUE}
+#Creating a `desertor` variable
+eph_train <- eph_train %>% filter(!is.na(ED0504))%>%filter(!is.na(decili))%>%
+  mutate(desertor = as.factor(ifelse(ED0504 < 503 &ED0504 != 409 & !is.na(ED10), "desertor", "no_desertor")))
+
+#Transforming labelled variables into regular factor variables
+eph_train <- eph_train %>% mutate_at(
+  vars('P06', 'DPTO', 'AREA', 'ED01'),
+  funs(as_factor(.))
+)
+
+#Proportion of desertors
+mean(eph_train$desertor=="desertor")
+
+#Splitting into train and test sets
+test_index <- createDataPartition(eph_train$desertor, times=1, p=0.2, list = F)
+train_set <- eph_train[-test_index,]
+test_set <- eph_train[test_index,]
+
+#Creating a `desertor` variable
+eph_test <- eph_test %>% filter(!is.na(ED0504))%>% filter(!is.na(decili))%>%
+  mutate(desertor = as.factor(ifelse(as.numeric(ED0504) < 503 &ED0504 != 409 & !is.na(ED10), "desertor", "no_desertor")))
+
+#Transforming labelled variables into regular factor variables
+eph_test <- eph_test %>% mutate_at(
+  vars('P06', 'DPTO', 'AREA', 'ED01'),
+  funs(as_factor(.))
+)
+```
+
+### Modeling
+
+When talking about a data science project, there are mainly two types of work that can be done: regression and classification. Since this project is based on a binomial classification problem, a linear model approach may not be useful. However, we will start with a Bayes Generalized Linear Model algorithms using the `train` function of the `caret` package and then go a little bit deeper.
+
+It is essential to point out that the `train` function first runs a prepocesing step of converting all factor variables into "dummy variables", that means turning one multivariable column into several binomial columns and then, while running the algorithm, performs cross validation (in this case we chose to run 3 cross validations) to find the best tunning parameters and gini impurity.
+
+Once we have trained the algorithms with the `train_set`, we are going to use the `predict` function on the `test_set` and the, once achieved a good score, we will use the entire `eph_train` and `eph_test` dataset for final validation. 
+
+#### Variables used for modeling
+
+From previous plots, we can recall several variables to use:
+
+  -`P02`: age of each person.
+  
+  -`P06`: sex of each person.
+  
+  -`DPTO`: department where the person lives.
+  
+  -`AREA`: area where the person lives (urban or rural).
+  
+  -`ED01`: language spoken in the house of the person.
+  
+  -`decili`: decil of income to which the person belongs
+  
+  -`S01A`: type of healts insurance that the person have.
+
+#### Bayes GLM
+
+The one advantage of the Bayesian GLM approach is the use of external information to improve the estimates of the linear model coefficients, so that we start with this first approach.
+
+#### Naive Bayes
+
+The naive bayes algorithm is not called in that way because it is simple or stupid, but rather because makes the strong assumption of independence across all variables. If this is true, it may perform better than other models, if not it performs very badly. However, we may recall from previous plot that variables are not independent.
+
+#### Random forest
+
+A common approach to tackle data science problems is the decision tree. But in this case we are going one step further and apply random forest. This means that instead of just one tree, our algorithm will run several trees with differents cross validations.
+
+## Results
+
+### Model Evaluation Function
+
+For the evaluation of the model we will use the `F_meas` and `Sensitivity` functions available in the `caret` package. However, this function it is not available in the arguments of the `train` function, so that we have to create it.
+
+```{r,cache=TRUE}
+#Creating the metric function
+f1 <- function(data, lev = NULL, model = NULL) {
+  f1_val <- F1_Score(y_pred = data$pred, y_true = data$obs, positive = lev[1])
+  c(F1 = f1_val)
+}
+```
+
+An essential step is to remind that we are working with an imbalance problem. That means that there are more `no_desertor` than `desertor` in the dataset, so that we have to 'weight' all the models.
+
+```{r,cache=TRUE}
+#Creatting the weights for the imbalanced model
+model_weights <- ifelse(train_set$desertor == "desertor",
+                        (1/table(train_set$desertor)[1]) * 0.5,
+                        (1/table(train_set$desertor)[2]) * 0.5)
+sum(model_weights)#The sum MUST equals 1
+```
+
+#### Bayes GLM Evaluation
+
+As mentioned, we are going to start with a Bayes Generalized Linear Model.
+
+```{r,cache=TRUE}
+#Bayesian general linear model===============
+glmbayes<-train(desertor ~P02+P06+DPTO+AREA+ED01+decili+S01A, 
+                data = train_set,
+                method="bayesglm",
+                weights = model_weights,
+                metric="F1",
+                trControl = trainControl(summaryFunction = f1,
+                                         method = "cv",
+                                         number = 3,
+                                         classProbs = TRUE))
+glmbayes$results
+
+#Prediction for glmbayes 
+pred_glm<-predict(glmbayes, test_set)
+
+#Confusion matrix for prediction vs observer
+confusionMatrix(pred_glm, test_set$desertor)
+```
+
+As expected, this model does not have a very high prediction power nor a high F1 score.
+
+```{r, cache=TRUE}
+#F1 score
+F_meas(pred_glm, test_set$desertor)
+
+#Results dataframe
+results<- data.frame(Method="Bayesian GLM",
+                     F1_Score=F_meas(pred_glm, test_set$desertor),
+                     Sensitivity=sensitivity(pred_glm, test_set$desertor))
+results
+```
+
+Can we do it better? Yes, definitely we can.
+
+#### Naive Bayes Evaluation
+
+Now, we proceed to run a Naive Bayes model.
+
+```{r,cache=TRUE}
+naive_bayes<-train(desertor ~ P02+P06+DPTO+AREA+ED01+decili+S01A, 
+                   data = train_set,
+                   method="naive_bayes",
+                   weights = model_weights,
+                   metric="F1",
+                   trControl = trainControl(summaryFunction =f1,
+                                            method = "cv",
+                                            number = 3,
+                                            classProbs = TRUE))
+naive_bayes$results
+
+#Predicting with `naive bayes` method
+pred_naive_bayes<-predict(naive_bayes, test_set)
+
+#Confusion matrix prediction vs observation
+confusionMatrix(pred_naive_bayes, test_set$desertor)
+```
+
+While we can see that there was a small improvement, this may not be enough yet.
+
+```{r, cache=TRUE}
+#F1 score
+F_meas(pred_naive_bayes, test_set$desertor)
+
+#Results dataframe
+results<- bind_rows(results,data.frame(Method="Naive Bayes",
+                                       F1_Score=F_meas(pred_naive_bayes, test_set$desertor),
+                                       Sensitivity=sensitivity(pred_naive_bayes, test_set$desertor)))
+results
+```
+
+Again, can we do it better? Yes, we still can.
+
+#### Random Forest Evaluation
+
+Finally, we are going to apply a random forest.
+
+```{r,cache=TRUE}
+#Random forest with `rpart` method=======
+cart<-train(desertor ~P02+P06+DPTO+AREA+ED01+decili+S01A, 
+           data = train_set,
+           method="rpart",
+           weights = model_weights,
+           metric="F1",
+           trControl = trainControl(summaryFunction = f1,
+                                    method = "cv",
+                                    number = 3,
+                                    classProbs = TRUE),
+           tuneGrid= data.frame(cp=seq(0.0,0.1, length = 25)))
+cart$results
+
+#Prediction with the `rpart` randomforest method
+pred_cart<- predict(cart, test_set)
+
+#Confusion martix prediction vs observation
+confusionMatrix(pred_cart, test_set$desertor, mode="prec_recall")
+```
+
+We can notice a great improvement!
+
+```{r, cache=TRUE}
+#F1 score
+F_meas(pred_cart, test_set$desertor)
+
+#Results dataframe
+results<- bind_rows(results,data.frame(Method="Rpart",
+                                       F1_Score=F_meas(pred_cart, test_set$desertor),
+                                       Sensitivity=sensitivity(pred_cart, test_set$desertor)))
+results
+```
+
+Now, we are ready to run the final validation.
+
+### Final Validation
+
+As previous mentioned, now we are going to perform the final validation, training the algorithm with the entire `eph_train` dataset and testing it with the `eph_test` dataset. The algorithm used will be the random forest with the `rpart` method.
+
+```{r, cache=TRUE}
+#Final Validation
+#Creatting the weights for the imbalanced final model
+model_weights <- ifelse(eph_train$desertor == "desertor",
+                        (1/table(eph_train$desertor)[1]) * 0.5,
+                        (1/table(eph_train$desertor)[2]) * 0.5)
+sum(model_weights)#The sum MUST equals 1
+```
+
+First, we re-run the weights for the model.
+
+```{r, cache=TRUE}
+#Training the model
+validation<-train(desertor ~P02+P06+DPTO+AREA+ED01+decili+S01A, 
+            data = eph_train,
+            method="rpart",
+            weights = model_weights,
+            metric="F1",
+            trControl = trainControl(summaryFunction = f1,
+                                     method = "cv",
+                                     number = 3,
+                                     classProbs = TRUE),
+            tuneGrid= data.frame(cp=seq(0.0,0.1, length = 25)))
+validation$results
+
+#Prediction with the `rpart` randomforest method
+pred_valid<- predict(validation, eph_test)
+
+#Confusion martix prediction vs observation
+confusionMatrix(pred_valid, eph_test$desertor, mode="prec_recall")
+```
+
+We can appreciate that we got a very similar result, that means a good `sensitivity` and `F1_score`
+
+```{r}
+#F1 score
+F_meas(pred_valid, eph_test$desertor)
+
+#Results dataframe of final validation
+results<- bind_rows(results,data.frame(Method="Final validation - rpart",
+                                       F1_Score=F_meas(pred_valid, eph_test$desertor),
+                                       Sensitivity=sensitivity(pred_valid, eph_test$desertor)))
+results
+```
+
+## Conclusion
+
+At first, we loaded the _EPH_ datasets from 2017 and 2018. Used the 2017's dataset for training and the 2018's for validation. We started exploring the variables of the 2017's poll, finding insights and correlations.
+
+After finishing our exploration, we proceed to create weights for this imbalanced problem and started a very simple algorithm as a generalized linear modeand then moving on until achieving a random forest algorithm.
+
+### Limitations
+
+As may have been noticed, the entire dataset is made up of more than 200 variables but we ended up using less than 10 variables. This is mainly due to the computation power require to build a more robust model with more variables.
+
+Another aspect we have not mentioned yet is that the entire _EPH_ is made up of 13 datasets. In this report we used only the dataset number 2.
+
+### Future Work
+
+As mentioned, in the future more models can be build with more variables and relating at leats one more out of the 13 datasets. 
+
+Following the same idea, another variable we did not mention is the `FEX` variables, also known as "expansion factor". This could be added to get the approcimate numbers across the entire country.
